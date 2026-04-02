@@ -1,18 +1,59 @@
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 *.egg-info/
+*.egg
 dist/
 build/
-.env
+.eggs/
+MANIFEST
+pip-log.txt
+
+# Virtual environments
 venv/
 .venv/
+env/
+ENV/
 
-# Analysis artifacts
+# Environment / secrets
+.env
+*.env.local
+
+# Analysis artifacts — never commit memory images or report output
 data/feodo_cache.json
 data/vt_cache.db
 data/yara/compiled.yarac
 reports/
+*.raw
+*.mem
+*.vmem
+*.dmp
+*.lime
+*.vmss
+*.vmsn
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # Logs
 *.log
+logs/
+
+# Test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
