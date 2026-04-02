@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.env
+venv/
+.venv/
+
+# Analysis artifacts
+data/feodo_cache.json
+data/vt_cache.db
+data/yara/compiled.yarac
+reports/
+
+# Logs
+*.log
