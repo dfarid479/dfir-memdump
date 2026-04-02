@@ -194,6 +194,8 @@ class IOC(BaseModel):
 class TriageMetadata(BaseModel):
     image_path:     str
     image_size_mb:  float
+    image_md5:      Optional[str] = None   # chain-of-custody
+    image_sha256:   Optional[str] = None   # chain-of-custody
     analysis_start: str
     analysis_end:   str
     vol3_version:   Optional[str] = None

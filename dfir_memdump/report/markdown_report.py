@@ -273,6 +273,8 @@ def _render_builtin(report: TriageReport) -> str:
         "",
         f"**Image:** `{m.image_path}`  ",
         f"**Size:** {m.image_size_mb:.1f} MB  ",
+        f"**MD5:** `{m.image_md5 or 'not computed'}`  ",
+        f"**SHA256:** `{m.image_sha256 or 'not computed'}`  ",
         f"**Started:** {m.analysis_start}  ",
         f"**Completed:** {m.analysis_end}  ",
         f"**Tool Version:** {m.tool_version}",

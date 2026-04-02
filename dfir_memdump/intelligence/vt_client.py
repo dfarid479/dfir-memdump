@@ -26,8 +26,10 @@ from dfir_memdump.intelligence.attck_mapper import get_mitre
 
 logger = logging.getLogger(__name__)
 
-VT_LOOKUP_URL = "https://www.virustotal.com/api/v3/files/{hash}"
-CACHE_DB_PATH = Path(__file__).parent.parent.parent / "data" / "vt_cache.db"
+VT_LOOKUP_URL  = "https://www.virustotal.com/api/v3/files/{hash}"
+CACHE_DB_PATH  = Path.home() / ".cache" / "dfir-memdump" / "vt_cache.db"
+CACHE_TTL_SECS = 30 * 86400   # 30 days
+VT_MAX_RETRIES = 3
 
 # A hit is considered malicious if at least this many AV engines flag it
 MALICIOUS_THRESHOLD = 5
@@ -57,8 +59,9 @@ class VTClient(BaseIntelModule):
             if proc.sha256 and proc.sha256 not in hashes:
                 hashes[proc.sha256] = (proc.pid, proc.name)
 
-        # DLL hashes from IOC-flagged DLLs (only those loaded by suspicious pids)
-        flagged_pids = {p.pid for p in ctx.processes}  # in practice filter to injected pids
+        # DLL hashes from DLLs loaded by processes that have malfind hits (RWX memory),
+        # which are the most likely to be injected or malicious.
+        flagged_pids = {m.pid for m in ctx.malfind}
         for dll in ctx.dlls:
             if dll.sha256 and dll.sha256 not in hashes and dll.pid in flagged_pids:
                 proc = ctx.pid_to_process.get(dll.pid)
@@ -120,13 +123,13 @@ class VTClient(BaseIntelModule):
 
     # ─── VT API ──────────────────────────────────────────────────────────────
 
-    def _lookup(self, sha256: str) -> Optional[dict]:
+    def _lookup(self, sha256: str, _attempt: int = 0) -> Optional[dict]:
         """Return condensed VT result dict or None (not found / error)."""
         # In-memory cache
         if sha256 in self._cache:
             return self._cache[sha256]
 
-        # SQLite cache
+        # SQLite cache (respects TTL)
         cached = self._db_get(sha256)
         if cached is not None:
             self._cache[sha256] = cached
@@ -150,9 +153,20 @@ class VTClient(BaseIntelModule):
             return None
 
         if resp.status_code == 429:
-            logger.warning("VT rate limit hit — sleeping 60s")
-            time.sleep(60)
-            return self._lookup(sha256)  # retry once
+            if _attempt >= VT_MAX_RETRIES:
+                logger.error(
+                    "VT rate limit persists after %d retries — skipping %s",
+                    VT_MAX_RETRIES, sha256[:16],
+                )
+                self._cache[sha256] = None
+                return None
+            wait = 60 * (2 ** _attempt)   # 60s, 120s, 240s
+            logger.warning(
+                "VT rate limit hit — sleeping %ds (attempt %d/%d)",
+                wait, _attempt + 1, VT_MAX_RETRIES,
+            )
+            time.sleep(wait)
+            return self._lookup(sha256, _attempt=_attempt + 1)
 
         if not resp.ok:
             logger.warning("VT error %d for %s", resp.status_code, sha256[:16])
@@ -220,10 +234,14 @@ class VTClient(BaseIntelModule):
             return None
         row = self._db.execute(
             "SELECT malicious, suspicious, undetected, total, popular_threat_name, "
-            "type_description, first_submission FROM vt_cache WHERE sha256 = ?",
+            "type_description, first_submission, fetched_at FROM vt_cache WHERE sha256 = ?",
             (sha256,),
         ).fetchone()
         if row is None:
+            return None
+        # Enforce TTL — expired entries are treated as cache misses
+        fetched_at = row[7] or 0.0
+        if time.time() - fetched_at > CACHE_TTL_SECS:
             return None
         if row[0] is None and row[1] is None:  # stored as "not found"
             return None

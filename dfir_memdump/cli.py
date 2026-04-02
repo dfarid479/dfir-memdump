@@ -62,19 +62,17 @@ def analyze(
     """Analyze a memory image and generate an IR triage report."""
     from dfir_memdump.runner import MemoryAnalyzer
     from dfir_memdump.report.builder import build_report
-    from dfir_memdump.config import settings
     from dfir_memdump.exceptions import ImageNotFoundError, Vol3NotFoundError
-
-    # Patch settings for CLI flags
-    if no_vt:
-        # Blank out the key so VTClient skips
-        import os
-        os.environ["VT_API_KEY"] = ""
 
     console.print(f"\n[bold cyan]dfir-memdump[/bold cyan] — analyzing [bold]{image.name}[/bold]\n")
 
     try:
-        analyzer = MemoryAnalyzer(image_path=image, profile=profile)
+        analyzer = MemoryAnalyzer(
+            image_path = image,
+            profile    = profile,
+            skip_vt    = no_vt,
+            skip_yara  = no_yara,
+        )
         with console.status("[bold green]Running Volatility3 plugins…", spinner="dots"):
             report = analyzer.run()
     except ImageNotFoundError as e:

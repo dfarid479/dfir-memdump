@@ -32,9 +32,21 @@ class BasePlugin(ABC, Generic[T]):
     plugin_name: str        # e.g. "windows.pslist.PsList"
     output_model: Type[T]   # The Pydantic model rows are parsed into
 
-    def run(self, image_path: Path, profile: str | None = None) -> list[T]:
-        """Invoke vol3, parse output, return typed model list."""
-        raw = self._invoke_vol3(image_path, profile)
+    def __init__(self, image_path: Path | None = None, profile: str | None = None):
+        """Store image_path and profile so run() can be called with no arguments."""
+        self._image_path = Path(image_path) if image_path else None
+        self._profile    = profile
+
+    def run(self, image_path: Path | None = None, profile: str | None = None) -> list[T]:
+        """Invoke vol3, parse output, return typed model list.
+
+        Args can be supplied at call time or at __init__ time — call-time takes precedence.
+        """
+        resolved_path    = image_path or self._image_path
+        resolved_profile = profile    or self._profile
+        if resolved_path is None:
+            raise ValueError(f"{self.__class__.__name__}.run() requires an image_path")
+        raw = self._invoke_vol3(resolved_path, resolved_profile)
         try:
             return self._parse(raw)
         except Exception as exc:
@@ -44,7 +56,7 @@ class BasePlugin(ABC, Generic[T]):
     def _parse(self, raw_output: str) -> list[T]:
         """Parse the vol3 JSON output string into model instances."""
 
-    def _invoke_vol3(self, image_path: Path, profile: str | None = None) -> str:
+    def _invoke_vol3(self, image_path: Path, profile: str | None = None) -> str:  # noqa: E501
         """Run vol3 as a subprocess and return stdout as a string."""
         cmd = [settings.vol3_path, "--renderer", "json", "-f", str(image_path)]
         if profile:

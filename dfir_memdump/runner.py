@@ -7,9 +7,10 @@ Usage:
 """
 
 from __future__ import annotations
+import hashlib
 import logging
-import os
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -58,9 +59,17 @@ logger = logging.getLogger(__name__)
 class MemoryAnalyzer:
     """Runs all plugins and intel modules against a memory image."""
 
-    def __init__(self, image_path: str | Path, profile: Optional[str] = None):
+    def __init__(
+        self,
+        image_path: str | Path,
+        profile:    Optional[str] = None,
+        skip_vt:    bool = False,
+        skip_yara:  bool = False,
+    ):
         self.image_path = Path(image_path)
-        self.profile = profile
+        self.profile    = profile
+        self.skip_vt    = skip_vt
+        self.skip_yara  = skip_yara
 
         if not self.image_path.exists():
             raise ImageNotFoundError(f"Memory image not found: {self.image_path}")
@@ -71,7 +80,12 @@ class MemoryAnalyzer:
 
         logger.info("=== dfir-memdump analysis starting: %s ===", self.image_path.name)
 
-        # ── Step 1: Run Volatility3 plugins ──────────────────────────────────
+        # ── Step 1: Hash the image (chain-of-custody) ─────────────────────────
+        logger.info("Hashing memory image for chain-of-custody record…")
+        image_md5, image_sha256 = self._hash_image(self.image_path)
+        logger.info("Image MD5: %s  SHA256: %s", image_md5, image_sha256)
+
+        # ── Step 2: Run Volatility3 plugins ───────────────────────────────────
         processes   = self._run_plugin(PsListPlugin,    "PsList")
         connections = self._run_plugin(NetScanPlugin,   "NetScan")
         malfind     = self._run_plugin(MalfindPlugin,   "Malfind")
@@ -80,7 +94,7 @@ class MemoryAnalyzer:
         handles     = self._run_plugin(HandlesPlugin,   "Handles")
         privileges  = self._run_plugin(PrivilegesPlugin,"Privileges")
 
-        # ── Step 2: Build intelligence context ───────────────────────────────
+        # ── Step 3: Build intelligence context ───────────────────────────────
         ctx = IntelContext(
             processes   = processes,
             connections = connections,
@@ -91,8 +105,16 @@ class MemoryAnalyzer:
             privileges  = privileges,
         )
 
-        # ── Step 3: Run intelligence modules ─────────────────────────────────
+        # ── Step 4: Run intelligence modules ──────────────────────────────────
         all_findings: list[Finding] = []
+
+        skip_modules: set = set()
+        if self.skip_yara:
+            skip_modules.add(YaraEngine)
+            logger.info("YARA scanning skipped (--no-yara)")
+        if self.skip_vt:
+            skip_modules.add(VTClient)
+            logger.info("VirusTotal lookups skipped (--no-vt)")
 
         for module_cls in [
             AnomalyDetector,
@@ -105,6 +127,8 @@ class MemoryAnalyzer:
             MutexChecker,
             PrivilegeChecker,
         ]:
+            if module_cls in skip_modules:
+                continue
             module = module_cls()
             try:
                 findings = module.analyze(ctx)
@@ -113,32 +137,34 @@ class MemoryAnalyzer:
             except Exception as exc:
                 logger.error("Intel module %s failed: %s", module_cls.__name__, exc, exc_info=True)
 
-        # ── Step 4: Build summaries ───────────────────────────────────────────
+        # ── Step 5: Build summaries ───────────────────────────────────────────
         process_summary = self._build_process_summary(processes, all_findings)
         network_summary = self._build_network_summary(connections, all_findings)
 
-        # ── Step 5: Extract IOCs ──────────────────────────────────────────────
+        # ── Step 6: Extract IOCs ──────────────────────────────────────────────
         iocs = self._extract_iocs(all_findings)
 
-        # ── Step 6: Build per-process risk scores ─────────────────────────────
+        # ── Step 7: Build per-process risk scores ─────────────────────────────
         risk_scores = self._build_risk_scores(processes, all_findings)
 
-        # ── Step 6b: Reconstruct attack chain ─────────────────────────────────
+        # ── Step 8: Reconstruct attack chain ──────────────────────────────────
         attack_chain = build_attack_chain(all_findings)
 
-        # ── Step 7: Build metadata ────────────────────────────────────────────
+        # ── Step 9: Build metadata ─────────────────────────────────────────────
         end_str = datetime.now(timezone.utc).isoformat()
         size_mb = self.image_path.stat().st_size / (1024 * 1024)
 
         metadata = TriageMetadata(
             image_path     = str(self.image_path),
             image_size_mb  = round(size_mb, 2),
+            image_md5      = image_md5,
+            image_sha256   = image_sha256,
             analysis_start = start_str,
             analysis_end   = end_str,
             profile        = self.profile,
         )
 
-        # ── Step 8: Executive summary ─────────────────────────────────────────
+        # ── Step 10: Executive summary ────────────────────────────────────────
         exec_summary = self._build_exec_summary(all_findings, process_summary, network_summary)
 
         elapsed = time.time() - start_time
@@ -163,14 +189,25 @@ class MemoryAnalyzer:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _run_plugin(self, plugin_cls, label: str) -> list:
-        plugin = plugin_cls(self.image_path, profile=self.profile)
+        plugin = plugin_cls()
         try:
-            results = plugin.run()
+            results = plugin.run(self.image_path, profile=self.profile)
             logger.info("%s: %d rows", label, len(results))
             return results
         except Exception as exc:
             logger.error("%s plugin failed: %s", label, exc)
             return []
+
+    @staticmethod
+    def _hash_image(image_path: Path) -> tuple[str, str]:
+        """Compute MD5 and SHA256 of the memory image for chain-of-custody."""
+        md5    = hashlib.md5()
+        sha256 = hashlib.sha256()
+        with open(image_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
+                md5.update(chunk)
+                sha256.update(chunk)
+        return md5.hexdigest(), sha256.hexdigest()
 
     @staticmethod
     def _build_process_summary(processes, findings: list[Finding]) -> ProcessSummary:
@@ -231,7 +268,6 @@ class MemoryAnalyzer:
         CRITICAL=10, HIGH=5, MEDIUM=2, LOW=1, INFO=0.
         Returns list sorted by score descending.
         """
-        from collections import defaultdict
         scores: dict[int, int]       = defaultdict(int)
         counts: dict[int, int]       = defaultdict(int)
         titles: dict[int, list[str]] = defaultdict(list)

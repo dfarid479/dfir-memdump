@@ -152,6 +152,8 @@ def _render(report: TriageReport) -> str:
   <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">Image</span><span class="meta-value">{_e(m.image_path)}</span></div>
     <div class="meta-item"><span class="meta-label">Size</span><span class="meta-value">{m.image_size_mb:.1f} MB</span></div>
+    <div class="meta-item"><span class="meta-label">MD5</span><span class="meta-value">{_e(m.image_md5 or 'not computed')}</span></div>
+    <div class="meta-item"><span class="meta-label">SHA256</span><span class="meta-value">{_e(m.image_sha256 or 'not computed')}</span></div>
     <div class="meta-item"><span class="meta-label">Analysis Start</span><span class="meta-value">{_e(m.analysis_start)}</span></div>
     <div class="meta-item"><span class="meta-label">Analysis End</span><span class="meta-value">{_e(m.analysis_end)}</span></div>
     {f'<div class="meta-item"><span class="meta-label">Profile</span><span class="meta-value">{_e(m.profile)}</span></div>' if m.profile else ''}
