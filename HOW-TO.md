@@ -25,7 +25,7 @@ Step-by-step reference for common tasks.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/yourusername/dfir-memdump.git
+git clone https://github.com/dfarid479/dfir-memdump.git
 cd dfir-memdump
 
 # 2. Create and activate a virtual environment

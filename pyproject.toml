@@ -39,9 +39,9 @@ yara = ["yara-python>=4.5.0"]
 dev  = ["pytest>=7.0", "pytest-cov", "mypy", "ruff"]
 
 [project.urls]
-Homepage   = "https://github.com/yourusername/dfir-memdump"
-Repository = "https://github.com/yourusername/dfir-memdump"
-Issues     = "https://github.com/yourusername/dfir-memdump/issues"
+Homepage   = "https://github.com/dfarid479/dfir-memdump"
+Repository = "https://github.com/dfarid479/dfir-memdump"
+Issues     = "https://github.com/dfarid479/dfir-memdump/issues"
 
 [project.scripts]
 dfir-memdump = "dfir_memdump.cli:main"

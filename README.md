@@ -55,7 +55,7 @@ Runs a curated stack of Volatility3 plugins against a memory image, passes the r
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/dfir-memdump.git
+git clone https://github.com/dfarid479/dfir-memdump.git
 cd dfir-memdump
 
 python3 -m venv venv
