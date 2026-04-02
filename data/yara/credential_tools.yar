@@ -64,7 +64,7 @@ rule LSASS_Dump_Strings
         $s5 = "comsvcs.dll" ascii wide
 
     condition:
-        2 of ($s1, $s2, $s3) or $s4
+        2 of ($s1, $s2, $s3) or $s4 or $s5
 }
 
 rule ProcDump_LSASS_Abuse
@@ -83,7 +83,7 @@ rule ProcDump_LSASS_Abuse
         $lsass = "lsass" ascii wide nocase
 
     condition:
-        $lsass and ($t1 or $t2)
+        $lsass and ($t1 or $t2 or $t3)
 }
 
 rule Impacket_Strings

@@ -66,7 +66,7 @@ rule Metasploit_Meterpreter
         $s7 = "ReflectiveLoader" ascii wide
 
     condition:
-        ($s1 or $s2) and 2 of ($s3, $s4, $s5, $s7)
+        ($s1 or $s2) and 2 of ($s3, $s4, $s5, $s6, $s7)
 }
 
 rule Empire_PowerShell_Agent
