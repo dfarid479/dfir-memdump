@@ -30,6 +30,7 @@ from dfir_memdump.plugins.cmdline     import CmdLinePlugin
 from dfir_memdump.plugins.dlllist     import DllListPlugin
 from dfir_memdump.plugins.handles     import HandlesPlugin
 from dfir_memdump.plugins.privileges  import PrivilegesPlugin
+from dfir_memdump.plugins.bitlocker   import BitlockerPlugin
 
 # Intelligence modules
 from dfir_memdump.intelligence                        import IntelContext
@@ -42,6 +43,7 @@ from dfir_memdump.intelligence.string_extractor       import StringExtractor
 from dfir_memdump.intelligence.lateral_movement       import LateralMovementDetector
 from dfir_memdump.intelligence.mutex_checker          import MutexChecker
 from dfir_memdump.intelligence.privilege_checker      import PrivilegeChecker
+from dfir_memdump.intelligence.encryption_keys        import EncryptionKeyFinder
 from dfir_memdump.intelligence.chain_builder          import build_attack_chain
 
 # Severity → numeric weight for risk scoring
@@ -86,23 +88,26 @@ class MemoryAnalyzer:
         logger.info("Image MD5: %s  SHA256: %s", image_md5, image_sha256)
 
         # ── Step 2: Run Volatility3 plugins ───────────────────────────────────
-        processes   = self._run_plugin(PsListPlugin,    "PsList")
-        connections = self._run_plugin(NetScanPlugin,   "NetScan")
-        malfind     = self._run_plugin(MalfindPlugin,   "Malfind")
-        cmdlines    = self._run_plugin(CmdLinePlugin,   "CmdLine")
-        dlls        = self._run_plugin(DllListPlugin,   "DllList")
-        handles     = self._run_plugin(HandlesPlugin,   "Handles")
-        privileges  = self._run_plugin(PrivilegesPlugin,"Privileges")
+        processes      = self._run_plugin(PsListPlugin,    "PsList")
+        connections    = self._run_plugin(NetScanPlugin,   "NetScan")
+        malfind        = self._run_plugin(MalfindPlugin,   "Malfind")
+        cmdlines       = self._run_plugin(CmdLinePlugin,   "CmdLine")
+        dlls           = self._run_plugin(DllListPlugin,   "DllList")
+        handles        = self._run_plugin(HandlesPlugin,   "Handles")
+        privileges     = self._run_plugin(PrivilegesPlugin,"Privileges")
+        bitlocker_keys = self._run_plugin(BitlockerPlugin, "Bitlocker")
 
         # ── Step 3: Build intelligence context ───────────────────────────────
         ctx = IntelContext(
-            processes   = processes,
-            connections = connections,
-            malfind     = malfind,
-            cmdlines    = cmdlines,
-            dlls        = dlls,
-            handles     = handles,
-            privileges  = privileges,
+            processes      = processes,
+            connections    = connections,
+            malfind        = malfind,
+            cmdlines       = cmdlines,
+            dlls           = dlls,
+            handles        = handles,
+            privileges     = privileges,
+            bitlocker_keys = bitlocker_keys,
+            image_path     = self.image_path,
         )
 
         # ── Step 4: Run intelligence modules ──────────────────────────────────
@@ -126,6 +131,7 @@ class MemoryAnalyzer:
             LateralMovementDetector,
             MutexChecker,
             PrivilegeChecker,
+            EncryptionKeyFinder,
         ]:
             if module_cls in skip_modules:
                 continue
@@ -147,10 +153,13 @@ class MemoryAnalyzer:
         # ── Step 7: Build per-process risk scores ─────────────────────────────
         risk_scores = self._build_risk_scores(processes, all_findings)
 
-        # ── Step 8: Reconstruct attack chain ──────────────────────────────────
+        # ── Step 8: Collect encryption key artifacts from context ─────────────
+        encryption_keys = ctx.encryption_keys
+
+        # ── Step 9: Reconstruct attack chain ──────────────────────────────────
         attack_chain = build_attack_chain(all_findings)
 
-        # ── Step 9: Build metadata ─────────────────────────────────────────────
+        # ── Step 10: Build metadata ────────────────────────────────────────────
         end_str = datetime.now(timezone.utc).isoformat()
         size_mb = self.image_path.stat().st_size / (1024 * 1024)
 
@@ -164,7 +173,7 @@ class MemoryAnalyzer:
             profile        = self.profile,
         )
 
-        # ── Step 10: Executive summary ────────────────────────────────────────
+        # ── Step 11: Executive summary ────────────────────────────────────────
         exec_summary = self._build_exec_summary(all_findings, process_summary, network_summary)
 
         elapsed = time.time() - start_time
@@ -183,6 +192,7 @@ class MemoryAnalyzer:
             privileges           = privileges,
             process_risk_scores  = risk_scores,
             attack_chain         = attack_chain,
+            encryption_keys      = encryption_keys,
             executive_summary    = exec_summary,
         )
 

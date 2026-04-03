@@ -7,7 +7,12 @@ malfind output) and returns a list of Finding objects.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dfir_memdump.models import Finding, ProcessInfo, NetworkConnection, MalfindEntry, CmdlineEntry, DllInfo, HandleEntry, PrivilegeEntry
+from pathlib import Path
+from typing import Optional
+from dfir_memdump.models import (
+    Finding, ProcessInfo, NetworkConnection, MalfindEntry,
+    CmdlineEntry, DllInfo, HandleEntry, PrivilegeEntry, EncryptionKeyArtifact,
+)
 
 
 class IntelContext:
@@ -15,28 +20,35 @@ class IntelContext:
 
     def __init__(
         self,
-        processes:   list[ProcessInfo]       = None,
-        connections: list[NetworkConnection] = None,
-        malfind:     list[MalfindEntry]      = None,
-        cmdlines:    list[CmdlineEntry]      = None,
-        dlls:        list[DllInfo]           = None,
-        handles:     list[HandleEntry]       = None,
-        privileges:  list[PrivilegeEntry]    = None,
+        processes:     list[ProcessInfo]          = None,
+        connections:   list[NetworkConnection]    = None,
+        malfind:       list[MalfindEntry]         = None,
+        cmdlines:      list[CmdlineEntry]         = None,
+        dlls:          list[DllInfo]              = None,
+        handles:       list[HandleEntry]          = None,
+        privileges:    list[PrivilegeEntry]       = None,
+        bitlocker_keys: list[EncryptionKeyArtifact] = None,
+        image_path:    Optional[Path]             = None,
     ):
-        self.processes   = processes   or []
-        self.connections = connections or []
-        self.malfind     = malfind     or []
-        self.cmdlines    = cmdlines    or []
-        self.dlls        = dlls        or []
-        self.handles     = handles     or []
-        self.privileges  = privileges  or []
+        self.processes      = processes      or []
+        self.connections    = connections    or []
+        self.malfind        = malfind        or []
+        self.cmdlines       = cmdlines       or []
+        self.dlls           = dlls           or []
+        self.handles        = handles        or []
+        self.privileges     = privileges     or []
+        self.bitlocker_keys = bitlocker_keys or []
+        self.image_path     = image_path     # raw image path for subprocess tools
+
+        # Mutable — EncryptionKeyFinder appends to this during analyze()
+        self.encryption_keys: list[EncryptionKeyArtifact] = list(self.bitlocker_keys)
 
         # Build fast lookup tables
-        self.pid_to_process:   dict[int, ProcessInfo]       = {p.pid: p for p in self.processes}
-        self.pid_to_cmdline:   dict[int, CmdlineEntry]      = {c.pid: c for c in self.cmdlines}
-        self.pid_to_dlls:      dict[int, list[DllInfo]]     = {}
-        self.pid_to_handles:   dict[int, list[HandleEntry]] = {}
-        self.pid_to_privileges:dict[int, list[PrivilegeEntry]] = {}
+        self.pid_to_process:    dict[int, ProcessInfo]          = {p.pid: p for p in self.processes}
+        self.pid_to_cmdline:    dict[int, CmdlineEntry]         = {c.pid: c for c in self.cmdlines}
+        self.pid_to_dlls:       dict[int, list[DllInfo]]        = {}
+        self.pid_to_handles:    dict[int, list[HandleEntry]]    = {}
+        self.pid_to_privileges: dict[int, list[PrivilegeEntry]] = {}
         for dll in self.dlls:
             self.pid_to_dlls.setdefault(dll.pid, []).append(dll)
         for h in self.handles:

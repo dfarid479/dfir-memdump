@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from collections import Counter
+
 from dfir_memdump.models import ProcessInfo, TriageReport, Severity
 
 logger = logging.getLogger(__name__)
@@ -355,6 +357,43 @@ def _render_builtin(report: TriageReport) -> str:
             ]
         lines.append("")
 
+    # Encryption key artifacts
+    if report.encryption_keys:
+        lines += [
+            "---",
+            "",
+            "## 🔑 Encryption Key Artifacts",
+            "",
+            f"**{len(report.encryption_keys)} key artifact(s) recovered.**",
+            "",
+        ]
+        for key in report.encryption_keys:
+            lines += [
+                f"### {key.key_type} — {key.algorithm}",
+                "",
+                f"**Source:** `{key.source}`" + (f"  **PID:** {key.pid} ({key.process_name})" if key.pid else ""),
+                "",
+            ]
+            if key.key_hex:
+                lines += [
+                    "**Key (hex):**",
+                    "```",
+                    key.key_hex,
+                    "```",
+                ]
+            if key.dislocker_cmd:
+                lines += [
+                    "**Mount command:**",
+                    "```bash",
+                    key.dislocker_cmd,
+                    "```",
+                ]
+            if key.file_offset:
+                lines.append(f"**File offset:** `{key.file_offset}`")
+            if key.notes:
+                lines += ["", f"_{key.notes}_"]
+            lines.append("")
+
     # MITRE ATT&CK coverage
     techniques = report.unique_mitre_techniques()
     if techniques:
@@ -367,19 +406,30 @@ def _render_builtin(report: TriageReport) -> str:
             "",
         ]
 
-    # IOC table
+    # IOC summary (grouped by type, full list collapsed)
     if report.iocs:
+        type_counts = Counter(ioc.type for ioc in report.iocs)
+        summary_line = " | ".join(
+            f"**{cnt}** {ioc_type}"
+            for ioc_type, cnt in sorted(type_counts.items(), key=lambda x: -x[1])
+        )
         lines += [
             "---",
             "",
             "## IOC Summary",
             "",
+            f"{len(report.iocs)} total IOCs — {summary_line}",
+            "",
+            "<details><summary>Full IOC list</summary>",
+            "",
             "| Type | Value | Context |",
-            "|------|-------|---------|",
+            "|------|-------|---------| ",
         ]
-        for ioc in report.iocs[:100]:
+        for ioc in report.iocs[:200]:
             lines.append(f"| {ioc.type} | `{ioc.value}` | {ioc.context[:60]} |")
-        lines.append("")
+        if len(report.iocs) > 200:
+            lines.append(f"| … | _({len(report.iocs) - 200} more — use JSON output)_ | |")
+        lines += ["", "</details>", ""]
 
     lines += [
         "---",

@@ -33,6 +33,7 @@ class FindingCategory(str, enum.Enum):
     PERSISTENCE   = "PERSISTENCE"
     INJECTION     = "INJECTION"
     NETWORK       = "NETWORK"
+    ENCRYPTION    = "ENCRYPTION"
 
 
 # ─── Volatility Plugin Output Models ─────────────────────────────────────────
@@ -144,6 +145,21 @@ class PrivilegeEntry(BaseModel):
     default_enabled:  bool = False
 
 
+# ─── Encryption Key Artifact ─────────────────────────────────────────────────
+
+class EncryptionKeyArtifact(BaseModel):
+    """A recovered encryption key or key candidate from memory."""
+    key_type:      str            # "BitLocker-FVEK", "AES-128", "AES-256", "VeraCrypt-candidate"
+    algorithm:     str            # e.g. "AES-128-XTS", "AES-256-CBC"
+    key_hex:       str            # hex-encoded key material
+    source:        str            # "windows.bitlocker", "aeskeyfind", "bulk_extractor", "yara"
+    file_offset:   Optional[str] = None   # hex offset in image file
+    dislocker_cmd: Optional[str] = None   # ready-to-run dislocker/bdemount command
+    pid:           Optional[int] = None   # associated process (VeraCrypt VAD recovery)
+    process_name:  Optional[str] = None
+    notes:         Optional[str] = None
+
+
 # ─── Attack Chain Step ────────────────────────────────────────────────────────
 
 class ChainStep(BaseModel):
@@ -235,6 +251,7 @@ class TriageReport(BaseModel):
     privileges:          list[PrivilegeEntry] = Field(default_factory=list)
     process_risk_scores: list[ProcessRiskScore] = Field(default_factory=list)
     attack_chain:        list[ChainStep] = Field(default_factory=list)
+    encryption_keys:     list[EncryptionKeyArtifact] = Field(default_factory=list)
     executive_summary:   Optional[str] = None
 
     def critical_findings(self) -> list[Finding]:
