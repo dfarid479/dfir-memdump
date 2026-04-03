@@ -11,6 +11,7 @@ Detects:
 from __future__ import annotations
 import logging
 import re
+from collections import defaultdict
 
 from dfir_memdump.models import Finding, FindingCategory, Severity
 from dfir_memdump.intelligence import BaseIntelModule, IntelContext
@@ -30,7 +31,7 @@ VALID_PARENTS: dict[str, set[str]] = {
     "lsass.exe":        {"wininit.exe"},
     "svchost.exe":      {"services.exe", "msmpeng.exe"},
     "taskhost.exe":     {"services.exe"},
-    "taskhostw.exe":    {"services.exe"},
+    "taskhostw.exe":    {"services.exe", "svchost.exe"},
     "spoolsv.exe":      {"services.exe"},
     "explorer.exe":     {"userinit.exe", "winlogon.exe"},
     "userinit.exe":     {"winlogon.exe"},
@@ -172,44 +173,51 @@ class AnomalyDetector(BaseIntelModule):
                         affected_process= proc.name,
                     ))
 
-        # 5. Hollow process detection — malfind entries not backed by a loaded DLL
+        # 5. Hollow process detection — group unbacked PAGE_EXECUTE_READWRITE regions by PID,
+        #    emit one finding per process to avoid duplicates (one per VAD entry pre-fix)
+        pid_unbacked: dict[int, list] = defaultdict(list)
         for entry in ctx.malfind:
             if "PAGE_EXECUTE_READWRITE" not in (entry.protection or ""):
                 continue
-
-            # Check if the VAD region is backed by a loaded module
             pid_dlls = ctx.pid_to_dlls.get(entry.pid, [])
             vad_start_int = int(entry.vad_start, 16) if entry.vad_start.startswith("0x") else 0
-
             backed_by_module = any(
                 int(dll.base, 16) == vad_start_int
                 for dll in pid_dlls
                 if dll.base.startswith("0x")
             )
-
             if not backed_by_module:
-                proc_name = ctx.pid_to_process.get(entry.pid, type("x", (), {"name": entry.process_name})()).name
-                findings.append(Finding(
-                    severity        = Severity.CRITICAL,
-                    category        = FindingCategory.INJECTION,
-                    title           = f"Hollow process / unbacked executable memory: PID {entry.pid} ({entry.process_name})",
-                    description     = (
-                        f"Process {entry.process_name} (PID {entry.pid}) has a VAD region at "
-                        f"{entry.vad_start} marked {entry.protection} that is not backed by any "
-                        "loaded module in DllList. This is a strong indicator of process hollowing "
-                        "or reflective DLL injection."
-                    ),
-                    evidence        = (
-                        f"VAD: {entry.vad_start}-{entry.vad_end} | Protection: {entry.protection} | "
-                        f"No matching DLL base address found in {len(pid_dlls)} loaded modules"
-                    ),
-                    mitre           = get_mitre("process_hollowing"),
-                    source_module   = self.name,
-                    source_plugin   = "windows.malfind.Malfind",
-                    affected_pid    = entry.pid,
-                    affected_process= entry.process_name,
-                    iocs            = [f"pid:{entry.pid}", f"vad:{entry.vad_start}"],
-                ))
+                pid_unbacked[entry.pid].append(entry)
+
+        for pid, entries in pid_unbacked.items():
+            first = entries[0]
+            pid_dlls = ctx.pid_to_dlls.get(pid, [])
+            evidence_lines = [
+                f"  VAD {e.vad_start}-{e.vad_end} | {e.protection}"
+                for e in entries[:10]
+            ]
+            if len(entries) > 10:
+                evidence_lines.append(f"  ... and {len(entries) - 10} more unbacked regions")
+            findings.append(Finding(
+                severity        = Severity.CRITICAL,
+                category        = FindingCategory.INJECTION,
+                title           = f"Hollow process / unbacked executable memory: PID {pid} ({first.process_name})",
+                description     = (
+                    f"Process {first.process_name} (PID {pid}) has {len(entries)} VAD region(s) "
+                    f"marked PAGE_EXECUTE_READWRITE that are not backed by any loaded module in DllList. "
+                    "This is a strong indicator of process hollowing or reflective DLL injection."
+                ),
+                evidence        = (
+                    f"{len(entries)} unbacked executable region(s) | "
+                    f"{len(pid_dlls)} loaded modules checked\n" + "\n".join(evidence_lines)
+                ),
+                mitre           = get_mitre("process_hollowing"),
+                source_module   = self.name,
+                source_plugin   = "windows.malfind.Malfind",
+                affected_pid    = pid,
+                affected_process= first.process_name,
+                iocs            = [f"pid:{pid}"],
+            ))
 
         logger.info("AnomalyDetector: %d findings", len(findings))
         return findings

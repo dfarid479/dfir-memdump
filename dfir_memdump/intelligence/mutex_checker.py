@@ -15,6 +15,7 @@ long after the binary has been obfuscated or renamed.
 from __future__ import annotations
 import logging
 import re
+from collections import defaultdict
 
 from dfir_memdump.models import Finding, FindingCategory, Severity
 from dfir_memdump.intelligence import BaseIntelModule, IntelContext
@@ -66,12 +67,16 @@ for _ptype, _val, _label, _mitre in KNOWN_BAD_MUTEXES:
         _COMPILED_BAD.append((_ptype, _val.lower(), _label, _mitre))
 
 # ── Sensitive registry key fragments ─────────────────────────────────────────
+# Matched as substrings of the lowercase key path.
+# Use hive-level specificity to avoid matching subkeys that happen to contain
+# the word "security" (e.g. HKLM\SOFTWARE\...\INTERNET EXPLORER\SECURITY).
 _SENSITIVE_REGISTRY_KEYS = [
-    r"\sam",
-    r"\security",
+    r"machine\sam",
+    r"machine\security",
+    r"\registry\machine\sam",
+    r"\registry\machine\security",
     r"\system\currentcontrolset\control\lsa",
     r"\system\currentcontrolset\services",
-    r"\\sam\\sam",
 ]
 
 # ── System processes that legitimately hold cross-process handles ─────────────
@@ -171,38 +176,62 @@ class MutexChecker(BaseIntelModule):
                     break
 
         # ── 3. Cross-process handle (Process type) — injection indicator ──────
-        # A non-system process holding a handle to another process's address space
-        # is a classic injection setup (e.g. OpenProcess → WriteProcessMemory → CreateRemoteThread)
-        pid_set = {p.pid for p in ctx.processes}
+        # A non-system process holding a handle with write/execute access to another
+        # process is a classic injection setup (OpenProcess → WriteProcessMemory → CreateRemoteThread).
+        # Filter: SYNCHRONIZE-only (0x100000) handles are NOT injection-capable — skip them.
+        # Deduplicate: one finding per holder PID (not one per handle).
+        _INJECT_CAPABLE_MASK = (
+            0x0002 |   # PROCESS_CREATE_THREAD
+            0x0008 |   # PROCESS_VM_OPERATION
+            0x0020 |   # PROCESS_VM_WRITE
+            0x0400     # PROCESS_SUSPEND_RESUME
+        )
+
+        cross_proc_by_pid: dict[int, list] = defaultdict(list)
         for h in ctx.handles:
             if h.handle_type.lower() != "process":
                 continue
             holder_lower = h.process_name.lower()
             if holder_lower in _LEGIT_CROSS_PROC:
                 continue
-            # Try to resolve the target PID from the handle name (vol3 sometimes shows it)
-            # Even without resolution, a non-system process holding a Process handle is worth flagging
+            try:
+                mask = int(h.granted_access, 16)
+            except (ValueError, TypeError):
+                mask = 0
+            if not (mask & _INJECT_CAPABLE_MASK):
+                continue
+            cross_proc_by_pid[h.pid].append(h)
+
+        for pid, handles in cross_proc_by_pid.items():
+            first = handles[0]
+            evidence_lines = [
+                f"  handle {h.handle_value} access {h.granted_access}"
+                + (f" → {h.name}" if h.name else "")
+                for h in handles[:5]
+            ]
+            if len(handles) > 5:
+                evidence_lines.append(f"  ... and {len(handles) - 5} more")
             findings.append(Finding(
                 severity        = Severity.MEDIUM,
                 category        = FindingCategory.INJECTION,
-                title           = f"Cross-process handle held by '{h.process_name}' (PID {h.pid})",
+                title           = f"Cross-process handles with write/execute access held by '{first.process_name}' (PID {pid})",
                 description     = (
-                    f"'{h.process_name}' (PID {h.pid}) holds an open Process-type handle "
-                    f"(value {h.handle_value}, access {h.granted_access}). "
-                    "Non-system processes opening handles to other processes may be staging "
-                    "process injection via OpenProcess → WriteProcessMemory → CreateRemoteThread."
+                    f"'{first.process_name}' (PID {pid}) holds {len(handles)} open Process-type handle(s) "
+                    "with access rights sufficient for process injection "
+                    "(PROCESS_VM_WRITE / PROCESS_CREATE_THREAD / PROCESS_VM_OPERATION). "
+                    "This is consistent with an OpenProcess → WriteProcessMemory → CreateRemoteThread injection chain."
                 ),
                 evidence        = (
-                    f"Holder: {h.process_name} (PID {h.pid})\n"
-                    f"Handle: type=Process, value={h.handle_value}, access={h.granted_access}\n"
-                    f"Target name (if available): {h.name or 'N/A'}"
+                    f"Holder: {first.process_name} (PID {pid}) | "
+                    f"{len(handles)} injection-capable Process handle(s)\n"
+                    + "\n".join(evidence_lines)
                 ),
                 mitre           = get_mitre("process_injection"),
                 source_module   = self.name,
                 source_plugin   = "windows.handles.Handles",
-                affected_pid    = h.pid,
-                affected_process= h.process_name,
-                iocs            = [f"pid:{h.pid}"],
+                affected_pid    = pid,
+                affected_process= first.process_name,
+                iocs            = [f"pid:{pid}"],
             ))
 
         logger.info("MutexChecker: %d findings from %d handles", len(findings), len(ctx.handles))

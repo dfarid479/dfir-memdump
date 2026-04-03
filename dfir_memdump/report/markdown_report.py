@@ -358,12 +358,22 @@ def _render_builtin(report: TriageReport) -> str:
         lines.append("")
 
     # Encryption key artifacts
-    if report.encryption_keys:
+    lines += [
+        "---",
+        "",
+        "## 🔑 Encryption Key Artifacts",
+        "",
+    ]
+    if not report.encryption_keys:
         lines += [
-            "---",
+            "_Plugin ran — no encryption key material recovered from this image._  ",
+            "_BitLocker FVEKs require an active encrypted volume mounted at collection time. "
+            "AES candidates require `aeskeyfind` or `bulk_extractor` on PATH. "
+            "VeraCrypt/TrueCrypt detection requires the mount process to have been running._",
             "",
-            "## 🔑 Encryption Key Artifacts",
-            "",
+        ]
+    else:
+        lines += [
             f"**{len(report.encryption_keys)} key artifact(s) recovered.**",
             "",
         ]

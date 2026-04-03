@@ -605,7 +605,16 @@ def _render_iocs(iocs) -> str:
 def _render_encryption_keys(keys) -> str:
     """Render the Encryption Key Artifacts section."""
     if not keys:
-        return ""
+        return """
+<section class="section enc-keys-section">
+  <h2>🔑 Encryption Key Artifacts <span class="count-badge" style="background:#555">0</span></h2>
+  <p class="dim" style="padding:12px 0">
+    Plugin ran — no encryption key material recovered from this image.<br>
+    BitLocker FVEKs require an active BitLocker-protected volume mounted at collection time.
+    AES candidates require <code>aeskeyfind</code> or <code>bulk_extractor</code> on PATH.
+    VeraCrypt/TrueCrypt detection requires the mount process to have been running.
+  </p>
+</section>"""
 
     rows = ""
     for key in keys:
