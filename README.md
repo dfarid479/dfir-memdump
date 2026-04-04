@@ -2,7 +2,7 @@
 
 **Windows memory forensics triage tool powered by Volatility3.**
 
-Runs a curated stack of Volatility3 plugins against a memory image, passes the results through nine intelligence modules, and produces a structured triage report in JSON, Markdown, and self-contained HTML — ready to hand off to leadership, drop into a case folder, or import into a SIEM.
+Runs a curated stack of Volatility3 plugins against a memory image, passes the results through ten intelligence modules, and produces a structured triage report in JSON, Markdown, and self-contained HTML — ready to hand off to leadership, drop into a case folder, or import into a SIEM.
 
 ---
 
@@ -10,8 +10,8 @@ Runs a curated stack of Volatility3 plugins against a memory image, passes the r
 
 | Stage | What happens |
 |---|---|
-| **Plugin execution** | Runs `windows.pslist`, `windows.netscan`, `windows.malfind`, `windows.cmdline`, `windows.dlllist`, `windows.handles`, `windows.privileges` via Volatility3 |
-| **Intelligence analysis** | Nine modules analyse the output for behavioural indicators |
+| **Plugin execution** | Runs `windows.pslist`, `windows.netscan`, `windows.malfind`, `windows.cmdline`, `windows.dlllist`, `windows.handles`, `windows.privileges`, `windows.bitlocker.Bitlocker` via Volatility3 |
+| **Intelligence analysis** | Ten modules analyse the output for behavioural indicators |
 | **Report generation** | Outputs JSON (machine-readable), Markdown, and interactive HTML |
 
 ### Intelligence modules
@@ -27,6 +27,7 @@ Runs a curated stack of Volatility3 plugins against a memory image, passes the r
 | `LateralMovementDetector` | SMB/RDP/WinRM/DCOM connections, 18 known lateral movement tool signatures, cmdline patterns (net use, wmiexec, Invoke-Command, etc.) |
 | `MutexChecker` | 20+ known malware mutexes (Cobalt Strike, WannaCry, LockBit, NjRAT, Mimikatz…), sensitive registry key handles, cross-process handle abuse |
 | `PrivilegeChecker` | Dangerous token privileges on non-system processes: `SeDebugPrivilege`, `SeImpersonatePrivilege`, `SeTcbPrivilege`, `SeLoadDriverPrivilege`, and five others |
+| `EncryptionKeyFinder` | BitLocker FVEKs via `windows.bitlocker.Bitlocker`; AES key schedules via `aeskeyfind` / `bulk_extractor`; VeraCrypt/TrueCrypt process presence detection |
 
 ### Report features
 
@@ -35,8 +36,9 @@ Runs a curated stack of Volatility3 plugins against a memory image, passes the r
 - **Process Tree** — parent→child hierarchy with `[!]` flags on suspicious PIDs and cmdline hints
 - **Event Timeline** — chronological process creation + network events, flagged entries surfaced first
 - **Attack Chain Reconstruction** — findings grouped by MITRE ATT&CK tactic, ordered along the kill chain (Initial Access → Execution → … → Impact), with plain-English narrative per stage
-- **Findings** — colour-coded by severity, MITRE ATT&CK linked, evidence blocks, IOC chips (click to copy)
-- **IOC Table** — deduplicated IPs, hashes, mutexes, registry keys, filepaths ready for SIEM import
+- **Encryption Key Artifacts** — BitLocker FVEKs with pre-populated `dislocker`/`bdemount` commands; AES key candidates from `aeskeyfind`/`bulk_extractor`; VeraCrypt/TrueCrypt process detection; explicit "no keys recovered" status when the plugin finds nothing
+- **Findings** — severity breakdown grid, grouped by severity level (CRITICAL expanded, others collapsed), MITRE ATT&CK linked, evidence blocks, IOC chips (click to copy)
+- **IOC Summary** — type-count badge grid (N IPs, N hashes, N mutexes…) with full deduplicated table collapsed beneath
 - **MITRE ATT&CK Coverage** — badge grid linking to technique pages
 - **Print / Save PDF** — one-click from the HTML report
 
@@ -49,6 +51,7 @@ Runs a curated stack of Volatility3 plugins against a memory image, passes the r
 - Windows memory image (`.raw`, `.mem`, `.vmem`, `.dmp`, etc.)
 - *(Optional)* `yara-python` for YARA scanning
 - *(Optional)* VirusTotal API key for hash lookups
+- *(Optional)* `aeskeyfind` or `bulk_extractor` on PATH for AES key schedule recovery
 
 ---
 
@@ -150,6 +153,7 @@ dfir_memdump/
     dlllist.py         # windows.dlllist.DllList
     handles.py         # windows.handles.Handles
     privileges.py      # windows.privileges.Privs
+    bitlocker.py       # windows.bitlocker.Bitlocker — FVEK extraction
   intelligence/
     anomaly_detector.py
     lolbas_checker.py
@@ -160,6 +164,7 @@ dfir_memdump/
     lateral_movement.py
     mutex_checker.py
     privilege_checker.py
+    encryption_keys.py # BitLocker FVEK + aeskeyfind/bulk_extractor + VeraCrypt detection
     chain_builder.py   # Attack chain reconstruction
     attck_mapper.py    # MITRE ATT&CK technique registry
   report/
@@ -173,6 +178,7 @@ data/
     credential_tools.yar
     c2_frameworks.yar
     packers.yar
+    encryption_artifacts.yar  # VeraCrypt, TrueCrypt, BitLocker FVE, LUKS headers
 templates/
   report.md.j2         # Jinja2 Markdown report template
 ```
@@ -195,6 +201,7 @@ templates/
 | T1134 / T1134.001 | Access Token Manipulation / Token Theft | PrivilegeChecker |
 | T1014 | Rootkit (SeLoadDriver abuse) | PrivilegeChecker |
 | T1486 | Data Encrypted for Impact (ransomware) | MutexChecker |
+| T1553 | Subvert Trust Controls (BitLocker key recovery) | EncryptionKeyFinder |
 
 ---
 
